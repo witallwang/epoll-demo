@@ -1,0 +1,19 @@
+How to compile:
+cmake -DCMAKE_C_COMPILER=clang ./
+make
+
+1.server端的实现
+
+Server端创建监听socket并bind到127.0.0.1:9000上，将监听socket的fd加入epoll中，等待连接事件发生，也就是等待client的请求。如果有client向server端发出连接请求，epoll_wait就会返回。如果返回的fd是socket的fd，那就需要server去accept。
+
+Client请求被server accept后，会产生一个client的fd，需要将这个fd加入到epoll中，等待client的写。EPOLLIN表明serve的读缓冲区有输入，可以读，这时候epoll_wait会返回这个client的fd，server就可以调用do_read去从这个fd读取client发来的消息。
+
+do_read读取完毕后，server需要将相同的内容返回给client，做法是：将这个fd与输出缓冲区为空事件加入到epoll。这样输出缓冲区为空的时候，就会进入到handle_events的do_write。do_write将上次读入的内容通过client的fd写回，写回后，需要将这个fd绑定到EPOLLIN等待下一次client的写，如此往复。
+
+2.client端的实现
+
+Client端的实现与server端非常类似。首先建立一个socket并向127.0.0.1:9000发起连接，连接成功后client会设置一个闹钟设定读写多长时间并且将socket fd加入epoll中。如果此时写出缓冲区为空（EPOLLOUT），do_write会被调用。
+
+do_write会把命令行指定个数的‘a’写入到fd中，从而server端会产生一个EPOLLIN事件。同时do_write还要记录产生query的次数。当写入完成后，将fd的关注事件设置为EPOLLIN等待server的应答。EPOLLIN产生后，epoll_wait就会返回,do_read会被调用。在do_read里，可以根据命令行选择是否打印server的回信，还要统计所有回信所花费的时间和。
+
+读写时间到达后，alarm发出的信号会被捕获，将全局变量time_flag标记为真。循环结束，打印统计。
